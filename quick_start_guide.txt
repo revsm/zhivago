@@ -1,0 +1,15 @@
+ZHIVAGO Quick Start Guide
+
+1. Install GO language
+2. unpack zhivago.tar.gz
+3. run build.sh
+4. run ./zhivago --path=DIR_TO_START_SCAN_FROM --report=DIR_TO_PUT_REPORT_IN
+5. check for generated report
+
+--
+
+Any questions? Email us ai@revisium.com
+
+--
+
+https://revisium.com/zhivago/ 

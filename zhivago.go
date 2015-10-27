@@ -57,7 +57,7 @@ const (
 	gAsyncMode      = true
 
 	gMaxPHPandHTML = 600
-	gMaxPreviewLen = 40
+	gMaxPreviewLen = 80
 	gMaxExtLinks   = 1001
 )
 
