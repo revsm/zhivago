@@ -93,7 +93,7 @@ var (
 	def = Settings{
 		path:          absPath,
 		scanAllFiles:  true, // full scan (rather than just a .js, .php, .html, .htaccess)
-		smartScan:     false,
+		smartScan:     true,
 		threads:       runtime.NumCPU() - 1,
 		maxSizeToScan: getBytes("600K"),
 		reportPath:    absPath,
@@ -160,6 +160,15 @@ func realpath(path string) string {
 		log.Fatalln(err)
 	}
 	return path
+}
+
+func writable(path string) bool {
+    info, _ := os.Stat(path) 
+    if (info != nil) && ((info.Mode() & 0333) != 0) {
+       return true 
+    } 
+
+    return false
 }
 
 func stripos(haystack, needle string) bool {
@@ -622,7 +631,7 @@ func getFragment(subj string, pos int) string {
 		lineNo = "?"
 	}
 
-	res := lineNo + ":" + subj[start:pos] + "%%%>>>" + subj[pos:end-1]
+	res := "L" + lineNo + ": " + subj[start:pos] + "%%%>>>" + subj[pos:end-1]
 	res = rSingleSpace.ReplaceAllString(res, " ")
 
 	return res
@@ -1423,36 +1432,42 @@ func CriticalPHP(fPath string, content string, sigID *string) int {
 
 ///////////////////////////////////////////////////////////////////////////
 func getReport() (report string) {
+
+	report += "# ZHIVAGO Website Malware Scanner v" + gZhivagoVersion + "\n"
+	report += "# https://revisium.com/zhivago/\n\n"
+
+	report += "# You may want to send this report to ai@revisium.com for further free malware analysis\n\n"
+
 	if gTotalOutput.crit != "" {
 		report += gColorRed + "Critical threats" + gColorOff + "\n"
 		report += strings.Replace(gTotalOutput.crit, "%%%>>>", gColorRed+"%>"+gColorOff, -1)
 	}
 	if gTotalOutput.js != "" {
-		report += gColorRed + "JS threats" + gColorOff + "\n"
+		report += gColorRed + "\nJS threats" + gColorOff + "\n"
 		report += strings.Replace(gTotalOutput.js, "%%%>>>", gColorRed+"%>"+gColorOff, -1)
 	}
 	if gTotalOutput.other != "" {
-		report += gColorRed + "Other threats" + gColorOff + "\n"
+		report += gColorRed + "\nOther threats" + gColorOff + "\n"
 		report += strings.Replace(gTotalOutput.other, "%%%>>>", gColorRed+"%>"+gColorOff, -1)
 	}
 	if len(gBase64) != 0 {
-		report += fmt.Sprintln("Base64:", gBase64)
+		report += fmt.Sprintln("\nBase64:\n", strings.Join(gBase64, "\n"))
 	}
 	if len(gDoorway) != 0 {
-		report += fmt.Sprintln("Doorway:", gDoorway)
+		report += fmt.Sprintln("\nDoorway:\n", strings.Join(gDoorway, "\n"))
 	}
 	if len(gSymLinks) != 0 {
-		report += fmt.Sprintln("SymLinks", gSymLinks)
+		report += fmt.Sprintln("\nSymLinks\n", strings.Join(gSymLinks, "\n"))
 	}
-	//if len(gUnixExec) != 0 { report += fmt.Sprintln("UnixExec", gUnixExec) }
+	//if len(gUnixExec) != 0 { report += fmt.Sprintln("UnixExec", strings.Join(gUnixExec, "\n"))) }
 	if len(gHiddenFiles) != 0 {
-		report += fmt.Sprintln("HiddenFiles", gHiddenFiles)
+		report += fmt.Sprintln("\nHiddenFiles\n", strings.Join(gHiddenFiles, "\n"))
 	}
 	if len(gBigFiles) != 0 {
-		report += fmt.Sprintln("BigFiles", gBigFiles)
+		report += fmt.Sprintln("\nBigFiles\n", strings.Join(gBigFiles, "\n"))
 	}
 	if report == "" {
-		report = "\nNothing Found\n"
+		report = "\nEverithing seems to be OK\n"
 	}
 	return
 }
@@ -1501,7 +1516,7 @@ func main() {
 	var optWith2check bool
 	flag.BoolVar(&optWith2check, "with-2check", false, "Create or use ZHIVAGO-DOUBLECHECK file")
 	// var def.smartScan bool // already set in var()
-	flag.BoolVar(&def.smartScan, "smart-scan", false, "Create or use ZHIVAGO-DOUBLECHECK file")
+	flag.BoolVar(&def.smartScan, "smart-scan", false, "Use smart scan mode to optimize check")
 
 	// Flags Options
 	// Here options are defaults
@@ -1659,6 +1674,12 @@ func main() {
 		}
 	}
 
+	if (def.reportPath == "") { def.reportPath = "." }
+
+	if (!writable(def.reportPath)) {
+           log.Fatalln("Cannot write report to directory '" + def.reportPath + "'!")
+        }
+
 	fmt.Printf("Loaded %d known files\n", len(gKnownList))
 
 	if optOneFile != "" {
@@ -1700,6 +1721,7 @@ func main() {
 	QCR_GoScan()
 	fmt.Println()
 	fmt.Println("Scanning complete! Time taken", time.Duration(time.Now().UnixNano()-mainStartTime))
+	fmt.Println()
 
 	// print report
 	report := getReport()
@@ -1719,12 +1741,12 @@ func main() {
 	if b, err := f.Write([]byte(report)); err != nil {
 		fmt.Println("Can't write report to", def.reportPath)
 	} else {
-		fmt.Println("Write", b, "byte to report file", def.reportPath)
+		fmt.Println("Written", b, "bytes into report file", def.reportPath)
 	}
 
 	if optWith2check && (len(gTotalOutput.all) > 0) {
 		if !fileExists(DoubleCheckFile) {
-			if err := ioutil.WriteFile(DoubleCheckFile, []byte("<?php die(\"Forbidden\"); ?>\n"), 0664); err == nil {
+			if err := ioutil.WriteFile(DoubleCheckFile, []byte("# ZHIVAGO Malware Scanner Doublecheck File\n"), 0664); err == nil {
 				all := gTotalOutput.all
 
 				//delete duplicates
@@ -1739,7 +1761,7 @@ func main() {
 				}
 				all = all[:l]
 				//all = array_values(array_unique(tmpIndex));
-				w := "<?php die(\"Forbidden\"); ?>"
+				w := "# ZHIVAGO Malware Scanner Doublecheck File"
 				for _, l := range all {
 					w += "\n" + strings.Replace(l, def.path, ".", 1)
 				}
