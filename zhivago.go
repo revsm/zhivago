@@ -52,7 +52,7 @@ const (
 	// put 1 for expert mode, 0 for basic check and 2 for paranoic mode
 
 	gExpertMode     = 2
-	gZhivagoVersion = "20151025"
+	gZhivagoVersion = "20151028"
 	gDebugMode      = false
 	gAsyncMode      = true
 
@@ -152,6 +152,15 @@ type SignedRegexp struct {
 	sign   string
 }
 
+func getExt(path string) string {
+	ext := filepath.Ext(path)
+	if ext == "" {
+		ext = filepath.Base(path)
+	} else {
+		ext = ext[1:]
+	}
+	return strings.ToLower(ext)
+}
 func realpath(path string) string {
 	path, err := filepath.EvalSymlinks(path)
 	path, err = filepath.Abs(path)
@@ -163,12 +172,12 @@ func realpath(path string) string {
 }
 
 func writable(path string) bool {
-    info, _ := os.Stat(path) 
-    if (info != nil) && ((info.Mode() & 0333) != 0) {
-       return true 
-    } 
+	info, _ := os.Stat(path)
+	if (info != nil) && ((info.Mode() & 0333) != 0) {
+		return true
+	}
 
-    return false
+	return false
 }
 
 func stripos(haystack, needle string) bool {
@@ -582,12 +591,7 @@ func QCR_ScanDirectoriesFn(fPath string, info os.FileInfo, err error) error {
 				return nil
 			}
 		}
-		ext := filepath.Ext(fPath)
-		if ext == "" {
-			ext = name
-		} else {
-			ext = ext[1:]
-		}
+		ext := getExt(fPath)
 
 		needToScan := def.scanAllFiles
 		if stringInArray(ext, gSensitiveFiles) {
@@ -595,7 +599,9 @@ func QCR_ScanDirectoriesFn(fPath string, info os.FileInfo, err error) error {
 			gUnixExec = append(gUnixExec, fPath)
 		}
 		// which files should be scanned
-		needToScan = needToScan && !stringInArray(ext, gIgnoredExt)
+		if len(gIgnoredExt) > 0 {
+			needToScan = needToScan && !stringInArray(ext, gIgnoredExt)
+		}
 		if !needToScan {
 			return nil
 		}
@@ -632,7 +638,9 @@ func getFragment(subj string, pos int) string {
 	}
 
 	res := "L" + lineNo + ": " + subj[start:pos] + "%%%>>>" + subj[pos:end-1]
-	res = rSingleSpace.ReplaceAllString(res, " ")
+	// must run func prepare(), or singleSpace will not work
+	res = allToSpace.Replace(res)
+	res = singleSpace.Replace(res)
 
 	return res
 }
@@ -673,49 +681,17 @@ func chrIntVal(subj string) string {
 
 ///////////////////////////////////////////////////////////////////////////
 var (
-	// php_strip
-	rComment1    = regexp.MustCompile(`(?m)[\s\^]+//.*$`)
-	rComment2    = regexp.MustCompile(`/\*([^\*][^/])*\*/`)
-	rSingleSpace = regexp.MustCompile("\\s+")
-	// unwrap
-	rLeftSpace = regexp.MustCompile("\\s*[;=,\\.\\(\\)\\{\\}\\+]\\s*")
-	rChrItnVal = regexp.MustCompile("\\bchr\\(\\s*([0-9a-fA-FxX]+)\\s*\\)")
-	rEscHex    = regexp.MustCompile("\\\\x([0-9a-fA-F]{1,2})")
-	rEscDec    = regexp.MustCompile("\\\\([0-9]{1,3})")
-)
-
-// Working like php_strip_whitespace, but it's not the same
-func php_strip_whitespace(s string) string {
-	s = rComment1.ReplaceAllString(s, "")
-	s = strings.Replace(s, "\n", " ", -1)
-	s = strings.Replace(s, "<?php", "<?php\n ", 1)
-	s = rComment2.ReplaceAllString(s, "")
-	s = rSingleSpace.ReplaceAllString(s, " ")
-	return s
-}
-func UnwrapObfu(s string) string {
-	s = strings.Replace(s, "@", "", -1)
-	s = rSingleSpace.ReplaceAllString(s, " ")
-	s = rLeftSpace.ReplaceAllStringFunc(s, strings.TrimSpace)
-	s = rChrItnVal.ReplaceAllStringFunc(s, chrIntVal)
-	s = rEscHex.ReplaceAllStringFunc(s, escapedHexToHex)
-	s = rEscDec.ReplaceAllStringFunc(s, escapedOctDec)
-	return s
-}
-
-///////////////////////////////////////////////////////////////////////////
-var (
-	phpRegexp       = regexp.MustCompile("(?smi)(<\\?php[\\w\\s]{5,})")
-	phpScriptRegexp = regexp.MustCompile("(?i)(<script[^>]*language\\s*=\\s*)('|\"|)php('|\"|)([^>]*>)")
+	phpRegexp       = pcreCompile("(?smi)(<\\?php[\\w\\s]{5,})", 0)
+	phpScriptRegexp = pcreCompile("(?i)(<script[^>]*language\\s*=\\s*)('|\"|)php('|\"|)([^>]*>)", 0)
 )
 
 func QCR_SearchPHP(subj string) int {
-	indexes := phpRegexp.FindStringIndex(subj)
+	indexes := phpRegexp.FindIndex([]byte(subj), 0)
 	if len(indexes) > 0 {
 		return indexes[0]
 	}
 
-	indexes = phpScriptRegexp.FindStringIndex(subj)
+	indexes = phpScriptRegexp.FindIndex([]byte(subj), 0)
 	if len(indexes) > 0 {
 		return indexes[0]
 	}
@@ -816,14 +792,69 @@ func checkVulnerability(filepath string, par_Content string) string {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+var (
+	// php_strip
+	rComment1 = pcreCompile(`(?m)^[\s]*//.*$`, 0)
+	rComment2 = pcreCompile(`(?s)/\*.*?\*/`, 0)
+	// unwrap
+	allToSpace     = strings.NewReplacer("\t", " ", "\x09", " ", "\x0A", " ", "\x0B", " ", "\x0C", " ", "\x0D", " ")
+	excessiveSpace = strings.NewReplacer(
+		" ;", ";", "; ", ";",
+		" =", "=", "= ", "=",
+		" ,", ",", ", ", ",",
+		" .", ".", ". ", ".",
+		" (", "(", "( ", "(",
+		" )", ")", ") ", ")",
+		" {", "{", "{ ", "{",
+		" }", "}", "} ", "}",
+		" +", "+", "+ ", "+",
+	)
+	rChrItnVal = regexp.MustCompile(`\bchr ?\( ?([0-9a-fA-FxX]+) ?\)`)
+	rEscHex    = regexp.MustCompile(`\\x([0-9a-fA-F]{1,2})`)
+	rEscDec    = regexp.MustCompile(`\\([0-9]{1,3})`)
+)
+
+// Working like php_strip_whitespace, but it's not the same
+func phpStrip(s string) string {
+	s = rComment1.ReplaceAllString(s, "", 0)
+	s = strings.Replace(s, "\n", "", -1)
+	s = strings.Replace(s, "<?php", "<?php ", 1)
+	s = strings.Replace(s, "?>", " ?>", 1)
+	s = rComment2.ReplaceAllString(s, "", 0)
+	return s
+}
+func unwrapObfu(s string) string {
+	s = strings.Replace(s, "@", "", -1)
+	s = allToSpace.Replace(s)
+	s = singleSpace.Replace(s)
+	s = excessiveSpace.Replace(s)
+	s = rChrItnVal.ReplaceAllStringFunc(s, chrIntVal)
+	s = rEscHex.ReplaceAllStringFunc(s, escapedHexToHex)
+	s = rEscDec.ReplaceAllStringFunc(s, escapedOctDec)
+	return s
+}
+
+///////////////////////////////////////////////////////////////////////////
 // append new SignedRegexp to db
 // separate function is needed for fast regexp lib changing
 func appendCompiledRegexp(r string, db []SignedRegexp) []SignedRegexp {
 	return append(db, SignedRegexp{pcreCompile("(?smi)"+r, 0), r, myCheckSum(r)})
 }
 
-///////////////////////////////////////////////////////////////////////////
-func compileRawRegexps() {
+var (
+	tonnsOfSpaces = []string{}
+	singleSpace   = strings.NewReplacer(tonnsOfSpaces...)
+)
+
+func prepare() {
+	// this is dirty hack for unwrapObfu func
+	s := " "
+	for i := 9999; i > 1; i-- {
+		s += " "
+		tonnsOfSpaces = append(tonnsOfSpaces, s, " ")
+	}
+	singleSpace = strings.NewReplacer(tonnsOfSpaces...)
+
 	for _, l := range g_SusDBRaw {
 		gSusDB = appendCompiledRegexp(l, gSusDB)
 	}
@@ -865,7 +896,7 @@ func compileRawRegexps() {
 ///////////////////////////////////////////////////////////////////////////
 func QCR_GoScan() {
 	ti := time.Now().UnixNano()
-	compileRawRegexps()
+	prepare()
 	if gDebugMode {
 		log.Println("Regexp db compiled", time.Duration(time.Now().UnixNano()-ti))
 		log.Println("QCR_GoScan started")
@@ -882,6 +913,7 @@ func QCR_GoScan() {
 		t := time.Tick(111 * time.Millisecond)
 		prog := ""
 		progLast := ""
+		done := false
 		go func() {
 			i := 0
 			x := "--\\|/"
@@ -893,7 +925,9 @@ func QCR_GoScan() {
 				progLast = strings.Replace(prog, def.path, ".", 1)
 				p := string(x[i%len(x)])
 				i++
-				fmt.Printf(s + "\r" + p + progLast)
+				if !done {
+					fmt.Printf(s + "\r" + p + progLast)
+				}
 			}
 		}()
 		go func() {
@@ -913,6 +947,7 @@ func QCR_GoScan() {
 			}()
 		}
 		wg.Wait()
+		done = true
 	} else {
 		for _, f := range gQueueToScan {
 			QCR_ScanFile(f)
@@ -944,7 +979,7 @@ func QCR_ScanFile(fPath string) string {
 			time.Sleep(r * time.Millisecond)
 		}
 		content = string(read)
-		contentUnwrapped = UnwrapObfu(php_strip_whitespace(content))
+		contentUnwrapped = unwrapObfu(phpStrip(content))
 	}
 
 	// unix executables
@@ -1191,9 +1226,10 @@ func checkException(content []byte, pos int) bool {
 func Phishing(fPath string, content string, sigID *string) int {
 	// need check file (by extension) ?
 	if def.smartScan {
+		ext := getExt(fPath)
 		skipCheck := def.smartScan
-		for _, ext := range gPhishFiles {
-			if strings.Contains(fPath, ext) {
+		for _, e := range gPhishFiles {
+			if ext == e {
 				skipCheck = false
 				break
 			}
@@ -1227,8 +1263,9 @@ func CriticalJS(fPath string, content string, sigID *string) int {
 	if def.smartScan {
 		// need check file (by extension) ?
 		skipCheck := def.smartScan
-		for _, ext := range gVirusFiles {
-			if strings.Contains(fPath, ext) {
+		ext := getExt(fPath)
+		for _, e := range gVirusFiles {
+			if ext == e {
 				skipCheck = false
 				break
 			}
@@ -1291,14 +1328,17 @@ func HeuristicChecker(content, fPath string) string {
 }
 
 ///////////////////////////////////////////////////////////////////////////
+var rCopy = pcreCompile(`(?smi)\bcopy\s*\(`, 0)
+
 func CriticalPHP(fPath string, content string, sigID *string) int {
 	stat, _ := os.Lstat(fPath)
 
 	skipCheck := def.smartScan
 	if def.smartScan {
 		// need check file (by extension) ?
-		for _, ext := range gCriticalFiles {
-			if strings.Contains(fPath, ext) {
+		ext := getExt(fPath)
+		for _, e := range gCriticalFiles {
+			if ext == e {
 				skipCheck = false
 				break
 			}
@@ -1397,7 +1437,7 @@ func CriticalPHP(fPath string, content string, sigID *string) int {
 
 	// detect uploaders / droppers
 	if def.expertMode > 1 {
-		indexes := regexp.MustCompile("(?smi)\\bcopy\\s*\\(").FindStringIndex(content)
+		indexes := rCopy.FindIndex([]byte(content), 0)
 		pos := -1
 		switch {
 		case len(indexes) > 0:
@@ -1451,20 +1491,20 @@ func getReport() (report string) {
 		report += strings.Replace(gTotalOutput.other, "%%%>>>", gColorRed+"%>"+gColorOff, -1)
 	}
 	if len(gBase64) != 0 {
-		report += fmt.Sprintln("\nBase64:\n", strings.Join(gBase64, "\n"))
+		report += fmt.Sprintln("\nBase64:\n" + strings.Join(gBase64, "\n"))
 	}
 	if len(gDoorway) != 0 {
-		report += fmt.Sprintln("\nDoorway:\n", strings.Join(gDoorway, "\n"))
+		report += fmt.Sprintln("\nDoorway:\n" + strings.Join(gDoorway, "\n"))
 	}
 	if len(gSymLinks) != 0 {
-		report += fmt.Sprintln("\nSymLinks\n", strings.Join(gSymLinks, "\n"))
+		report += fmt.Sprintln("\nSymLinks\n" + strings.Join(gSymLinks, "\n"))
 	}
 	//if len(gUnixExec) != 0 { report += fmt.Sprintln("UnixExec", strings.Join(gUnixExec, "\n"))) }
 	if len(gHiddenFiles) != 0 {
-		report += fmt.Sprintln("\nHiddenFiles\n", strings.Join(gHiddenFiles, "\n"))
+		report += fmt.Sprintln("\nHiddenFiles\n" + strings.Join(gHiddenFiles, "\n"))
 	}
 	if len(gBigFiles) != 0 {
-		report += fmt.Sprintln("\nBigFiles\n", strings.Join(gBigFiles, "\n"))
+		report += fmt.Sprintln("\nBigFiles\n" + strings.Join(gBigFiles, "\n"))
 	}
 	if report == "" {
 		report = "\nEverithing seems to be OK\n"
@@ -1474,6 +1514,14 @@ func getReport() (report string) {
 
 ///////////////////////////////////////////////////////////////////////////
 func main() {
+
+	// additional garbage collection every 5 seconds
+	gcT := time.Tick(5 * time.Second)
+	go func() {
+		for range gcT {
+			runtime.GC()
+		}
+	}()
 
 	// get random seed for random func
 	rand.Seed(time.Now().UnixNano())
@@ -1516,7 +1564,7 @@ func main() {
 	var optWith2check bool
 	flag.BoolVar(&optWith2check, "with-2check", false, "Create or use ZHIVAGO-DOUBLECHECK file")
 	// var def.smartScan bool // already set in var()
-	flag.BoolVar(&def.smartScan, "smart-scan", false, "Use smart scan mode to optimize check")
+	flag.BoolVar(&def.smartScan, "smart-scan", def.smartScan, "Use smart scan mode to optimize check")
 
 	// Flags Options
 	// Here options are defaults
@@ -1674,11 +1722,13 @@ func main() {
 		}
 	}
 
-	if (def.reportPath == "") { def.reportPath = "." }
+	if def.reportPath == "" {
+		def.reportPath = "."
+	}
 
-	if (!writable(def.reportPath)) {
-           log.Fatalln("Cannot write report to directory '" + def.reportPath + "'!")
-        }
+	if !writable(def.reportPath) {
+		log.Fatalln("Cannot write report to directory '" + def.reportPath + "'!")
+	}
 
 	fmt.Printf("Loaded %d known files\n", len(gKnownList))
 
@@ -1727,6 +1777,7 @@ func main() {
 	report := getReport()
 	fmt.Println(report)
 
+	fmt.Printf("Time taken %v\n", time.Duration(time.Now().UnixNano()-mainStartTime))
 	// write report
 	date := time.Now().Format("2006.01.02-150405")
 	report = strings.Replace(report, gColorOff, "", -1)
@@ -1777,10 +1828,5 @@ func main() {
 			fmt.Println(DoubleCheckFile + " already exists.")
 		}
 
-	}
-	if gDebugMode {
-		fmt.Println("gBase64:", gBase64)
-		fmt.Println("gUnixExec:", gUnixExec)
-		fmt.Println("gBigFiles:", gBigFiles)
 	}
 }
