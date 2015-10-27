@@ -171,13 +171,12 @@ func realpath(path string) string {
 	return path
 }
 
-func writable(path string) bool {
-	info, _ := os.Stat(path)
-	if (info != nil) && ((info.Mode() & 0333) != 0) {
-		return true
+func writable(path string) error {
+	info, err := os.Stat(path)
+	if (err != nil) && ((info.Mode() & 0333) != 0) {
+		return nil
 	}
-
-	return false
+	return err
 }
 
 func stripos(haystack, needle string) bool {
@@ -1649,11 +1648,11 @@ func main() {
 	}
 
 	if def.path == "" {
-		log.Fatalln("Directory ", def.path, "not found!")
-	} else if _, err := os.Lstat(def.path); err != nil {
-		log.Fatalln("Cannot read directory '" + def.path + "'!")
+		log.Fatalln("Path to scanning directory is empty!")
+	} else if _, err := os.Stat(def.path); err != nil {
+		log.Fatalln("Cannot stat directory '"+def.path+"'!\n", err)
 	} else if err := os.Chdir(def.path); err != nil {
-		log.Fatalln("Can't change directory to", def.path)
+		log.Fatalln("Can't change directory to '"+def.path+"'\n", err)
 	}
 
 	fileIgnoreFile := def.path + gPathSep + ".aignore"
@@ -1661,7 +1660,7 @@ func main() {
 	urlIgnoreFile := def.path + gPathSep + ".aurlignore"
 	knownFileName := def.path + gPathSep + ".aknown"
 
-	if _, e := os.Lstat(fileIgnoreFile); e == nil {
+	if _, e := os.Stat(fileIgnoreFile); e == nil {
 		f_bytes, _ := ioutil.ReadFile(fileIgnoreFile)
 		f := strings.Split(string(f_bytes), "\n")
 		for _, line := range f {
@@ -1669,7 +1668,7 @@ func main() {
 		}
 	}
 
-	if _, e := os.Lstat(dirIgnoreFile); e == nil {
+	if _, e := os.Stat(dirIgnoreFile); e == nil {
 		f_bytes, _ := ioutil.ReadFile(dirIgnoreFile)
 		f := strings.Split(string(f_bytes), "\n")
 		for _, line := range f {
@@ -1726,8 +1725,8 @@ func main() {
 		def.reportPath = "."
 	}
 
-	if !writable(def.reportPath) {
-		log.Fatalln("Cannot write report to directory '" + def.reportPath + "'!")
+	if err := writable(def.reportPath); err != nil {
+		log.Fatalln("Cannot write report to directory '"+def.reportPath+"'!\n", err)
 	}
 
 	fmt.Printf("Loaded %d known files\n", len(gKnownList))
@@ -1783,10 +1782,9 @@ func main() {
 	report = strings.Replace(report, gColorOff, "", -1)
 	report = strings.Replace(report, gColorRed, "", -1)
 	def.reportPath = filepath.Clean(def.reportPath + gPathSep + fmt.Sprintf("ZHIVAGO-REPORT-%s-%d.txt", date, rand.Intn(1000000)))
-	var f *os.File
-	var err error
-	if f, err = os.Create(def.reportPath); err != nil {
-		log.Fatalln("Cannot write to \"" + def.reportPath + "\"!")
+	f, err := os.Create(def.reportPath)
+	if err != nil {
+		log.Fatalln("Cannot write to '"+def.reportPath+"'!\n", err)
 	}
 	defer f.Close()
 	if b, err := f.Write([]byte(report)); err != nil {
