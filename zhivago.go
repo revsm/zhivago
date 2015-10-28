@@ -103,16 +103,46 @@ var (
 		expertMode:    gExpertMode,
 	}
 
-	// CapsGlobal
 	DoubleCheckFile = "ZHIVAGO-DOUBLECHECK"
+	gPathSep        = string(os.PathSeparator)
+	gQueueToScan    []string
 
-	gPathSep = string(os.PathSeparator)
-
-	gQueueToScan []string
-
+	// report globals
 	gTotalOutput = Output{}
 	gColorRed    = "\x1b\x5b\x31\x3b\x33\x31\x6d"
 	gColorOff    = "\x1b\x5b\x6d"
+
+	// regexp globals
+	// SearchPHP
+	phpRegexp       = pcreCompile("(?smi)(<\\?php[\\w\\s]{5,})", 0)
+	phpScriptRegexp = pcreCompile("(?i)(<script[^>]*language\\s*=\\s*)('|\"|)php('|\"|)([^>]*>)", 0)
+
+	// php_strip
+	rComment1 = pcreCompile(`(?m)^[\s]*//.*$`, 0)
+	rComment2 = pcreCompile(`(?s)/\*.*?\*/`, 0)
+	// unwrapObfu
+	allToSpace     = strings.NewReplacer("\t", " ", "\x09", " ", "\x0A", " ", "\x0B", " ", "\x0C", " ", "\x0D", " ")
+	excessiveSpace = strings.NewReplacer(
+		" ;", ";", "; ", ";",
+		" =", "=", "= ", "=",
+		" ,", ",", ", ", ",",
+		" .", ".", ". ", ".",
+		" (", "(", "( ", "(",
+		" )", ")", ") ", ")",
+		" {", "{", "{ ", "{",
+		" }", "}", "} ", "}",
+		" +", "+", "+ ", "+",
+	)
+	rChrItnVal = regexp.MustCompile(`\bchr ?\( ?([0-9a-fA-FxX]+) ?\)`)
+	rEscHex    = regexp.MustCompile(`\\x([0-9a-fA-F]{1,2})`)
+	rEscDec    = regexp.MustCompile(`\\([0-9]{1,3})`)
+
+	// unwraObfu; this one need to be build additionaly like in func prepare()
+	tonnsOfSpaces = []string{}
+	singleSpace   = strings.NewReplacer(tonnsOfSpaces...)
+
+	// CriticalPHP
+	rCopy = pcreCompile(`(?smi)\bcopy\s*\(`, 0)
 )
 
 // </GLOBALS>
@@ -679,11 +709,6 @@ func chrIntVal(subj string) string {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-var (
-	phpRegexp       = pcreCompile("(?smi)(<\\?php[\\w\\s]{5,})", 0)
-	phpScriptRegexp = pcreCompile("(?i)(<script[^>]*language\\s*=\\s*)('|\"|)php('|\"|)([^>]*>)", 0)
-)
-
 func QCR_SearchPHP(subj string) int {
 	indexes := phpRegexp.FindIndex([]byte(subj), 0)
 	if len(indexes) > 0 {
@@ -791,28 +816,6 @@ func checkVulnerability(filepath string, par_Content string) string {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-var (
-	// php_strip
-	rComment1 = pcreCompile(`(?m)^[\s]*//.*$`, 0)
-	rComment2 = pcreCompile(`(?s)/\*.*?\*/`, 0)
-	// unwrap
-	allToSpace     = strings.NewReplacer("\t", " ", "\x09", " ", "\x0A", " ", "\x0B", " ", "\x0C", " ", "\x0D", " ")
-	excessiveSpace = strings.NewReplacer(
-		" ;", ";", "; ", ";",
-		" =", "=", "= ", "=",
-		" ,", ",", ", ", ",",
-		" .", ".", ". ", ".",
-		" (", "(", "( ", "(",
-		" )", ")", ") ", ")",
-		" {", "{", "{ ", "{",
-		" }", "}", "} ", "}",
-		" +", "+", "+ ", "+",
-	)
-	rChrItnVal = regexp.MustCompile(`\bchr ?\( ?([0-9a-fA-FxX]+) ?\)`)
-	rEscHex    = regexp.MustCompile(`\\x([0-9a-fA-F]{1,2})`)
-	rEscDec    = regexp.MustCompile(`\\([0-9]{1,3})`)
-)
-
 // Working like php_strip_whitespace, but it's not the same
 func phpStrip(s string) string {
 	s = rComment1.ReplaceAllString(s, "", 0)
@@ -839,11 +842,6 @@ func unwrapObfu(s string) string {
 func appendCompiledRegexp(r string, db []SignedRegexp) []SignedRegexp {
 	return append(db, SignedRegexp{pcreCompile("(?smi)"+r, 0), r, myCheckSum(r)})
 }
-
-var (
-	tonnsOfSpaces = []string{}
-	singleSpace   = strings.NewReplacer(tonnsOfSpaces...)
-)
 
 func prepare() {
 	// this is dirty hack for unwrapObfu func
@@ -1327,8 +1325,6 @@ func HeuristicChecker(content, fPath string) string {
 }
 
 ///////////////////////////////////////////////////////////////////////////
-var rCopy = pcreCompile(`(?smi)\bcopy\s*\(`, 0)
-
 func CriticalPHP(fPath string, content string, sigID *string) int {
 	stat, _ := os.Lstat(fPath)
 
