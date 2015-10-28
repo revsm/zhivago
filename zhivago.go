@@ -43,7 +43,7 @@ import (
 	//"syscall"
 	"time"
 
-	"github.com/GRbit/go-pcre"
+	"github.com/revsm/go-pcre"
 	"github.com/djherbis/times"
 	"github.com/xurenlu/ahocorasick"
 )
